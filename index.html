@@ -314,6 +314,20 @@ section[id] { scroll-margin-top: calc(var(--hdr) + 16px); }
 .proto-copy { display: grid; gap: 20px; justify-items: start; min-width: 0; }
 .proto-copy .rows { width: 100%; }
 
+/* sound toggle */
+.hdr-r { display: flex; align-items: center; gap: 26px; }
+.snd {
+  display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+  font: 500 11px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase;
+  color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: 99px; padding: 8px 12px 8px 10px;
+}
+.snd:hover { color: var(--fg); }
+.snd[aria-pressed="true"] { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+.snd svg { width: 16px; height: 16px; flex: none; }
+.snd .wv { display: none; }
+.snd[aria-pressed="true"] .wv { display: inline; }
+.snd[aria-pressed="true"] .mu { display: none; }
+
 /* farmers photo */
 .farmers { margin-top: clamp(40px, 6vw, 80px); }
 .farmers img { display: block; width: 100%; height: auto; border-radius: 22px; background: var(--stage); }
@@ -466,7 +480,7 @@ img { max-width: 100%; }
 <div class="wrap">
 <header class="hdr">
   <a class="brand" href="#top" aria-label="CUBIC, back to top">CUBIC</a>
-  <nav aria-label="Sections">
+  <div class="hdr-r"><nav aria-label="Sections">
     <a href="#build">Build</a>
     <a href="#problem">Problem</a>
     <a href="#kit">Kit</a>
@@ -476,6 +490,10 @@ img { max-width: 100%; }
     <a href="#colombia">Colombia</a>
     <a href="#vision">Vision</a>
   </nav>
+    <button class="snd" id="sndBtn" type="button" aria-pressed="false" aria-label="Toggle sound effects">
+      <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path class="wv" d="M16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11"/><path class="mu" d="M16.5 9.5l5 5M21.5 9.5l-5 5"/></svg>
+      <span class="snd-t">Sound off</span>
+    </button></div>
 </header>
 
 <main id="main">
@@ -1517,6 +1535,88 @@ img { max-width: 100%; }
   var $ = function (s, c) { return (c || document).querySelector(s); };
   var $$ = function (s, c) { return Array.prototype.slice.call((c || document).querySelectorAll(s)); };
 
+
+  /* ---------- optional sound (Web Audio, no files) ---------- */
+  var Snd = (function () {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    var ctx = null, master = null, on = false, noiseBuf = null, lastAt = {};
+    function ensure() {
+      if (!AC) return false;
+      if (!ctx) { ctx = new AC(); master = ctx.createGain(); master.gain.value = 0.35; master.connect(ctx.destination); }
+      if (ctx.state === 'suspended') ctx.resume();
+      return true;
+    }
+    function tone(freq, t0, dur, type, vol, endFreq) {
+      var o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = type || 'sine';
+      o.frequency.setValueAtTime(freq, t0);
+      if (endFreq) o.frequency.exponentialRampToValueAtTime(endFreq, t0 + dur);
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(vol, t0 + 0.006);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g); g.connect(master);
+      o.start(t0); o.stop(t0 + dur + 0.03);
+    }
+    function noise(t0, dur, freq, q, vol, endFreq) {
+      if (!noiseBuf) {
+        noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+        var d = noiseBuf.getChannelData(0);
+        for (var i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      }
+      var s = ctx.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
+      var f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = q || 1;
+      f.frequency.setValueAtTime(freq, t0);
+      if (endFreq) f.frequency.exponentialRampToValueAtTime(endFreq, t0 + dur);
+      var g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(vol, t0 + Math.min(0.01, dur / 3));
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      s.connect(f); f.connect(g); g.connect(master);
+      s.start(t0); s.stop(t0 + dur + 0.03);
+    }
+    var lib = {
+      click: function (t) { noise(t, 0.035, 3200, 1.2, 0.9); tone(260, t, 0.06, 'triangle', 0.5, 110); tone(1900, t, 0.02, 'square', 0.06); },
+      latch: function (t) { tone(180, t, 0.12, 'triangle', 0.6, 70); noise(t, 0.05, 1200, 1, 0.5); },
+      thud: function (t) { tone(120, t, 0.16, 'sine', 0.7, 55); },
+      whirr: function (t) { noise(t, 0.7, 350, 4, 0.22, 1400); tone(240, t, 0.7, 'sawtooth', 0.05, 620); },
+      ping: function (t) { tone(1250, t, 1.1, 'sine', 0.35); tone(1250, t + 0.22, 1.0, 'sine', 0.12); },
+      blip: function (t) { tone(880, t, 0.09, 'sine', 0.35); tone(1320, t + 0.07, 0.12, 'sine', 0.3); },
+      blip2: function (t) { tone(1040, t, 0.08, 'sine', 0.22); },
+      chime: function (t) { tone(784, t, 0.7, 'triangle', 0.3); tone(1175, t + 0.12, 0.8, 'triangle', 0.28); tone(1568, t + 0.26, 0.9, 'triangle', 0.18); },
+      drip: function (t) { tone(900, t, 0.08, 'sine', 0.35, 380); },
+      water: function (t) {
+        for (var i = 0; i < 9; i++) tone(500 + Math.random() * 700, t + i * 0.11 + Math.random() * 0.05, 0.07, 'sine', 0.22, 220 + Math.random() * 200);
+        noise(t, 1.1, 900, 0.8, 0.08);
+      },
+      grow: function (t) { [523, 659, 784, 1047].forEach(function (f, i) { tone(f, t + i * 0.09, 0.25, 'sine', 0.2); }); },
+      tick: function (t) { noise(t, 0.02, 4500, 1, 0.35); }
+    };
+    return {
+      supported: !!AC,
+      isOn: function () { return on; },
+      set: function (v) { on = v; if (on) ensure(); },
+      play: function (name) {
+        if (!on || !ensure()) return;
+        var now = performance.now();
+        if (lastAt[name] && now - lastAt[name] < 90) return;
+        lastAt[name] = now;
+        try { lib[name](ctx.currentTime + 0.01); } catch (e) {}
+      }
+    };
+  })();
+  function makeEvents(list) {
+    var last = null;
+    return function (p) {
+      if (last !== null && Math.abs(p - last) < 0.25) {
+        list.forEach(function (e) { if (last < e[0] && p >= e[0]) Snd.play(e[1]); });
+      }
+      last = p;
+    };
+  }
+  var evBuild = makeEvents([[0.17, 'thud'], [0.34, 'thud'], [0.46, 'click'], [0.52, 'click'], [0.58, 'click'], [0.60, 'click'], [0.72, 'latch'], [0.86, 'water'], [0.97, 'chime']]);
+  var evAssemble = makeEvents([[0.20, 'latch'], [0.215, 'whirr'], [0.41, 'click'], [0.50, 'click'], [0.59, 'click'], [0.68, 'click'], [0.73, 'water'], [0.90, 'chime']]);
+  var evDetect = makeEvents([[0.13, 'ping'], [0.19, 'blip'], [0.22, 'ping'], [0.30, 'blip'], [0.31, 'ping'], [0.40, 'ping'], [0.41, 'blip'], [0.62, 'chime'], [0.665, 'blip2'], [0.71, 'blip2'], [0.83, 'grow']]);
+
   /* ---------- pinned stages ---------- */
   function makeStage(id, starts, apply) {
     var stage = document.getElementById(id);
@@ -1551,6 +1651,7 @@ img { max-width: 100%; }
     return { el: el, dx: f[0], dy: f[1], r: f[2], s: w[0], e: w[1] };
   });
   function applyBuild(p) {
+    evBuild(p);
     parts.forEach(function (o) {
       var t = clamp((p - o.s) / (o.e - o.s), 0, 1);
       var k = 1 - ease(t);
@@ -1566,6 +1667,7 @@ img { max-width: 100%; }
   var dLeaves = $$('#detect .d-leaves'), dPods = $$('#detect .d-pod');
   var cupX = [150, 380, 610];
   function applyDetect(p) {
+    evDetect(p);
     var t = clamp((p - 0.18) / 0.22, 0, 1);
     var bx = cupX[0] + (cupX[2] - cupX[0]) * t;
     var bo = clamp((p - 0.12) / 0.06, 0, 1) * (1 - clamp((p - 0.44) / 0.06, 0, 1));
@@ -1609,6 +1711,7 @@ img { max-width: 100%; }
   var aGrow = $$('#assemble .a-grow');
   var aWater = $('#aWater'), aRing = $('#aRing'), aDeg = $('#aDeg'), aLens = $('#aLens'), aPill = $('#aPill');
   function applyAssemble(p) {
+    evAssemble(p);
     aParts.forEach(function (o) {
       var t = clamp((p - o.s) / (o.e - o.s), 0, 1);
       var k = 1 - ease(t);
@@ -1696,7 +1799,7 @@ img { max-width: 100%; }
       if (focus) tab.focus();
     }
     tabs.forEach(function (t, i) {
-      t.addEventListener('click', function () { pick(t, false); queue(); });
+      t.addEventListener('click', function () { pick(t, false); queue(); Snd.play('tick'); });
       t.addEventListener('keydown', function (e) {
         if (e.key === 'ArrowRight') { e.preventDefault(); pick(tabs[(i + 1) % tabs.length], true); }
         if (e.key === 'ArrowLeft') { e.preventDefault(); pick(tabs[(i + tabs.length - 1) % tabs.length], true); }
@@ -1725,8 +1828,8 @@ img { max-width: 100%; }
       detail.appendChild(document.createTextNode(chosen.getAttribute('data-text')));
     }
   }
-  items.forEach(function (b) { b.addEventListener('click', function () { selectItem(b.getAttribute('data-item')); }); });
-  hots.forEach(function (h) { h.addEventListener('click', function () { selectItem(h.getAttribute('data-item')); }); });
+  items.forEach(function (b) { b.addEventListener('click', function () { selectItem(b.getAttribute('data-item')); Snd.play('tick'); }); });
+  hots.forEach(function (h) { h.addEventListener('click', function () { selectItem(h.getAttribute('data-item')); Snd.play('tick'); }); });
   selectItem('tube');
 
   /* ---------- seed pod demo ---------- */
@@ -1749,11 +1852,32 @@ img { max-width: 100%; }
       ? 'The ' + d.w + ' wrapper dissolves and gives the young ' + d.n.toLowerCase() + ' its first minerals. The seedling starts.'
       : d.n + ' pod, wrapped in ' + d.w + ' paper. Drop it into the cup as it is. There is nothing to unwrap.';
   }
-  radios.forEach(function (r) { r.addEventListener('change', function () { wet = false; podRender(); }); });
-  podBtn.addEventListener('click', function () { wet = !wet; podRender(); });
+  var growTimer = null;
+  radios.forEach(function (r) { r.addEventListener('change', function () { wet = false; clearTimeout(growTimer); podRender(); Snd.play('tick'); }); });
+  podBtn.addEventListener('click', function () {
+    wet = !wet;
+    clearTimeout(growTimer);
+    podRender();
+    if (wet) {
+      Snd.play('drip');
+      setTimeout(function () { Snd.play('water'); }, 250);
+      growTimer = setTimeout(function () { Snd.play('grow'); }, 2700);
+    } else {
+      Snd.play('tick');
+    }
+  });
   podRender();
 
-  /* ---------- app concept tabs use the same helper above ---------- */
+  /* ---------- sound toggle ---------- */
+  var sndBtn = $('#sndBtn');
+  if (!Snd.supported) { sndBtn.hidden = true; }
+  sndBtn.addEventListener('click', function () {
+    Snd.set(!Snd.isOn());
+    sndBtn.setAttribute('aria-pressed', Snd.isOn() ? 'true' : 'false');
+    $('.snd-t', sndBtn).textContent = Snd.isOn() ? 'Sound on' : 'Sound off';
+    if (Snd.isOn()) Snd.play('blip');
+  });
+
 })();
 </script>
 </body>
